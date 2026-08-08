@@ -1,56 +1,43 @@
-name: AI Video Publisher
+name: Free Gemini Video Agent
 
 on:
   workflow_dispatch:
-
+    inputs:
+      topic:
+        description: "موضوع الفيديو"
+        required: false
+        default: "حقيقة مذهلة من التاريخ"
+      script:
+        description: "سكريبت جاهز من Gemini (اختياري)"
+        required: false
+        default: ""
   schedule:
-    # سيتم ضبط الأوقات لاحقًا بناءً على بيانات التفاعل.
-    # UTC times
-    - cron: "0 8 * * *"
-    - cron: "0 12 * * *"
-    - cron: "0 16 * * *"
-    - cron: "0 20 * * *"
+    - cron: "0 4,10,16,22 * * *"
 
 jobs:
-  video-pipeline:
+  create-video:
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
-
+    timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install FFmpeg
+      - name: Install FFmpeg and Python packages
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
-
-      - name: Select topic
-        run: |
-          python src/topic_picker.py
-
-      - name: Commit topic history
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add data/topics.json
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-          else
-            git commit -m "chore: update topic history"
-            git push
-          fi
+      - name: Create video and images
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          VIDEO_TOPIC: ${{ inputs.topic || 'فيديو معلوماتي عربي' }}
+          SCRIPT_TEXT: ${{ inputs.script || '' }}
+        run: python src/video_agent.py
+      - name: Upload video, images, voice and script
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-video-${{ github.run_number }}
+          path: output/
+          retention-days: 7
