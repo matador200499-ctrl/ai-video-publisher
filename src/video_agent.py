@@ -118,6 +118,36 @@ def render(images, voice):
     final=OUTPUT/"final-video.mp4"; run("ffmpeg","-y","-i",str(silent),"-i",str(voice),"-c:v","copy","-c:a","aac","-b:a","192k","-shortest",str(final))
     return final
 
+def publish_to_facebook(video, post):
+    page_id = os.environ.get("FACEBOOK_PAGE_ID", "").strip()
+    token = os.environ.get("FACEBOOK_PAGE_ACCESS_TOKEN", "").strip()
+    if not page_id or not token:
+        raise RuntimeError("FACEBOOK_PAGE_ID and FACEBOOK_PAGE_ACCESS_TOKEN are required")
+    hashtags = " ".join(
+        tag if str(tag).startswith("#") else f"#{str(tag).replace(' ', '_')}"
+        for tag in post.get("hashtags", [])
+    )
+    description = "\n\n".join(part for part in (post.get("description", ""), hashtags) if part)
+    version = os.getenv("FACEBOOK_GRAPH_VERSION", "v26.0")
+    url = f"https://graph-video.facebook.com/{version}/{page_id}/videos"
+    with video.open("rb") as source:
+        response = requests.post(
+            url,
+            data={"access_token": token, "title": post.get("title", ""), "description": description},
+            files={"source": (video.name, source, "video/mp4")},
+            timeout=900,
+        )
+    if not response.ok:
+        try:
+            message = response.json().get("error", {}).get("message", response.text)
+        except ValueError:
+            message = response.text
+        raise RuntimeError(f"Facebook upload failed (HTTP {response.status_code}): {message}")
+    result = response.json()
+    (OUTPUT/"facebook-result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Published to Facebook. Video ID: {result.get('id', 'processing')}")
+    return result
+
 def main():
     if OUTPUT.exists(): shutil.rmtree(OUTPUT)
     OUTPUT.mkdir(parents=True)
@@ -127,6 +157,8 @@ def main():
     (OUTPUT/"platform-posts.json").write_text(json.dumps(data["platforms"], ensure_ascii=False, indent=2), encoding="utf-8")
     images=download_images(data["queries"]); voice=OUTPUT/"voice.mp3"; gTTS(data["narration"], lang="ar").save(voice)
     voice=fit_voice_to_platforms(voice)
-    print(f"Created: {render(images, voice)}")
+    final = render(images, voice)
+    print(f"Created: {final}")
+    publish_to_facebook(final, data["platforms"]["facebook"])
 
 if __name__ == "__main__": main()
