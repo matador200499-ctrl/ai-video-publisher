@@ -37,8 +37,9 @@ def available_models(api_key):
 
 def generate_script(topic):
     prompt = f'''اكتب سكربت فيديو عربي جذاب عن: {topic}
-أعد JSON فقط: {{"title":"عنوان","narration":"نص من 140 إلى 190 كلمة","queries":["five","English","visual","search","phrases"]}}
-اجعل المعلومات دقيقة والجمل قصيرة ولا تستخدم Markdown.'''
+أعد JSON فقط بهذا الشكل:
+{{"title":"عنوان","narration":"نص من 100 إلى 120 كلمة","queries":["five","English","visual","search","phrases"],"platforms":{{"facebook":{{"title":"عنوان","description":"وصف","hashtags":["هاشتاج"]}},"instagram":{{"title":"عنوان","description":"وصف","hashtags":["هاشتاج"]}},"tiktok":{{"title":"عنوان","description":"وصف","hashtags":["هاشتاج"]}},"youtube":{{"title":"عنوان","description":"وصف","hashtags":["هاشتاج"]}}}}}}
+اجعل المعلومات دقيقة والجمل قصيرة، واضبط النص لفيديو مدته من 45 إلى 60 ثانية، ولا تستخدم Markdown.'''
     api_key = os.environ["GEMINI_API_KEY"]
     response = None
     errors = []
@@ -58,9 +59,28 @@ def generate_script(topic):
     if not match: raise RuntimeError("Gemini did not return valid JSON")
     return json.loads(match.group(0))
 
+def platform_copy(title):
+    common = ["معلومات", "حقائق", "ثقافة", "فيديو"]
+    return {
+        platform: {"title": title, "description": f"اكتشف القصة الكاملة عن {title}.", "hashtags": common}
+        for platform in ("facebook", "instagram", "tiktok", "youtube")
+    }
+
+def normalize_data(data, topic):
+    data.setdefault("title", topic)
+    data.setdefault("queries", [topic])
+    generated = platform_copy(data["title"])
+    supplied = data.get("platforms") or {}
+    for platform, fallback in generated.items():
+        item = supplied.get(platform) or {}
+        fallback.update({key: value for key, value in item.items() if value})
+        supplied[platform] = fallback
+    data["platforms"] = supplied
+    return data
+
 def manual_script(text, topic):
     parts = [p.strip() for p in re.split(r"[.!؟\n]+", text) if p.strip()]
-    return {"title":topic, "narration":text, "queries":[topic, *parts[:4]]}
+    return normalize_data({"title":topic, "narration":text, "queries":[topic, *parts[:4]]}, topic)
 
 def download_images(queries):
     ASSETS.mkdir(parents=True, exist_ok=True)
@@ -78,6 +98,15 @@ def media_duration(path):
     r=subprocess.run(["ffprobe","-v","error","-show_entries","format=duration","-of","default=nw=1:nk=1",str(path)], check=True, capture_output=True, text=True)
     return float(r.stdout.strip())
 
+def fit_voice_to_platforms(voice, max_seconds=59.0):
+    current = media_duration(voice)
+    if current <= max_seconds:
+        return voice
+    fitted = OUTPUT / "voice-platform-fit.mp3"
+    speed = current / max_seconds
+    run("ffmpeg", "-y", "-i", str(voice), "-filter:a", f"atempo={speed:.5f}", str(fitted))
+    return fitted
+
 def render(images, voice):
     seconds=max(2.0, media_duration(voice)/len(images)); clips=[]
     for index, image in enumerate(images, 1):
@@ -93,9 +122,11 @@ def main():
     if OUTPUT.exists(): shutil.rmtree(OUTPUT)
     OUTPUT.mkdir(parents=True)
     topic=os.getenv("VIDEO_TOPIC", "حقيقة مذهلة من التاريخ"); supplied=os.getenv("SCRIPT_TEXT", "").strip()
-    data=manual_script(supplied, topic) if supplied else generate_script(topic)
+    data=manual_script(supplied, topic) if supplied else normalize_data(generate_script(topic), topic)
     (OUTPUT/"script.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    (OUTPUT/"platform-posts.json").write_text(json.dumps(data["platforms"], ensure_ascii=False, indent=2), encoding="utf-8")
     images=download_images(data["queries"]); voice=OUTPUT/"voice.mp3"; gTTS(data["narration"], lang="ar").save(voice)
+    voice=fit_voice_to_platforms(voice)
     print(f"Created: {render(images, voice)}")
 
 if __name__ == "__main__": main()
