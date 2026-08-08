@@ -8,14 +8,51 @@ OUTPUT, ASSETS = ROOT / "output", ROOT / "output" / "images"
 
 def run(*args): subprocess.run(args, check=True)
 
+def available_models(api_key):
+    preferred = os.getenv("GEMINI_MODEL", "").strip()
+    discovered = []
+    for version in ("v1", "v1beta"):
+        response = requests.get(
+            f"https://generativelanguage.googleapis.com/{version}/models",
+            params={"key": api_key, "pageSize": 1000},
+            timeout=45,
+        )
+        if not response.ok:
+            continue
+        for model in response.json().get("models", []):
+            methods = model.get("supportedGenerationMethods", [])
+            name = model.get("name", "").removeprefix("models/")
+            if "generateContent" in methods and name and not any(word in name for word in ("image", "live", "tts", "embedding")):
+                discovered.append((version, name))
+
+    order = [preferred, "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash"]
+    ranked = []
+    for wanted in order:
+        ranked.extend(item for item in discovered if wanted and item[1] == wanted and item not in ranked)
+    ranked.extend(item for item in discovered if "flash" in item[1] and item not in ranked)
+    ranked.extend(item for item in discovered if item not in ranked)
+    if not ranked:
+        raise RuntimeError("No Gemini text model is available for this API key. Check the key and Generative Language API access.")
+    return ranked
+
 def generate_script(topic):
     prompt = f'''اكتب سكربت فيديو عربي جذاب عن: {topic}
 أعد JSON فقط: {{"title":"عنوان","narration":"نص من 140 إلى 190 كلمة","queries":["five","English","visual","search","phrases"]}}
 اجعل المعلومات دقيقة والجمل قصيرة ولا تستخدم Markdown.'''
-    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={os.environ['GEMINI_API_KEY']}"
-    response = requests.post(url, json={"contents":[{"parts":[{"text":prompt}]}]}, timeout=90)
-    response.raise_for_status()
+    api_key = os.environ["GEMINI_API_KEY"]
+    response = None
+    errors = []
+    for version, model in available_models(api_key):
+        url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent"
+        response = requests.post(url, params={"key": api_key}, json={"contents":[{"parts":[{"text":prompt}]}]}, timeout=90)
+        if response.ok:
+            print(f"Gemini model: {model} ({version})")
+            break
+        errors.append(f"{model}/{version}: HTTP {response.status_code}")
+        if response.status_code not in (404, 429):
+            response.raise_for_status()
+    if response is None or not response.ok:
+        raise RuntimeError("All available Gemini models failed: " + "; ".join(errors))
     text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
     match = re.search(r"\{.*\}", text, re.S)
     if not match: raise RuntimeError("Gemini did not return valid JSON")
