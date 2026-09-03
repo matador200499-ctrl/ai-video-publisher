@@ -1,4 +1,4 @@
-import json, os, re, shutil, subprocess
+import json, os, re, shutil, subprocess, time
 from pathlib import Path
 import requests
 from gtts import gTTS
@@ -43,15 +43,52 @@ def generate_script(topic):
     api_key = os.environ["GEMINI_API_KEY"]
     response = None
     errors = []
-    for version, model in available_models(api_key):
+    retryable_statuses = {408, 429, 500, 502, 503, 504}
+
+    # Try several currently available models. Temporary Gemini outages are
+    # retried, then the pipeline automatically moves to the next model.
+    for version, model in available_models(api_key)[:8]:
+        response = None
         url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent"
-        response = requests.post(url, params={"key": api_key}, json={"contents":[{"parts":[{"text":prompt}]}]}, timeout=90)
-        if response.ok:
-            print(f"Gemini model: {model} ({version})")
-            break
-        errors.append(f"{model}/{version}: HTTP {response.status_code}")
-        if response.status_code not in (404, 429):
+        for attempt in range(1, 4):
+            try:
+                response = requests.post(
+                    url,
+                    params={"key": api_key},
+                    json={"contents":[{"parts":[{"text":prompt}]}]},
+                    timeout=90,
+                )
+            except requests.RequestException as exc:
+                errors.append(f"{model}/{version} attempt {attempt}: {type(exc).__name__}")
+                if attempt < 3:
+                    time.sleep(2 ** attempt)
+                    continue
+                break
+
+            if response.ok:
+                print(f"Gemini model: {model} ({version})")
+                break
+
+            errors.append(
+                f"{model}/{version} attempt {attempt}: HTTP {response.status_code}"
+            )
+            if response.status_code in retryable_statuses:
+                if attempt < 3:
+                    wait_seconds = 2 ** attempt
+                    print(
+                        f"Gemini temporarily unavailable (HTTP {response.status_code}); "
+                        f"retrying in {wait_seconds}s..."
+                    )
+                    time.sleep(wait_seconds)
+                    continue
+                break
+            if response.status_code == 404:
+                break
             response.raise_for_status()
+
+        if response is not None and response.ok:
+            break
+
     if response is None or not response.ok:
         raise RuntimeError("All available Gemini models failed: " + "; ".join(errors))
     text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
