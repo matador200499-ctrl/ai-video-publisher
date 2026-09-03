@@ -1,0 +1,31 @@
+name: Verify Gemini retry fix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/verify_gemini_fix.yml"
+
+jobs:
+  verify-gemini:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Python packages
+        run: pip install -r requirements.txt
+      - name: Verify Gemini script generation
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python - <<'PY'
+          from src.video_agent import generate_script
+          result = generate_script("اختبار تقني قصير")
+          assert result.get("title")
+          assert result.get("narration")
+          print("Gemini retry verification passed")
+          PY
