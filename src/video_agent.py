@@ -8,6 +8,33 @@ OUTPUT, ASSETS = ROOT / "output", ROOT / "output" / "images"
 
 def run(*args): subprocess.run(args, check=True)
 
+def choose_topic(requested):
+    requested = requested.strip()
+    automatic_defaults = {"", "فيديو معلوماتي عربي", "حقيقة مذهلة من التاريخ"}
+    if requested not in automatic_defaults:
+        return requested
+
+    topics_by_category = json.loads(
+        (ROOT / "topics.json").read_text(encoding="utf-8")
+    )
+    topics = [
+        (category, topic)
+        for category, category_topics in topics_by_category.items()
+        for topic in category_topics
+    ]
+    if not topics:
+        return requested or "حقيقة مذهلة من التاريخ"
+
+    run_number = os.getenv("GITHUB_RUN_NUMBER", "").strip()
+    if run_number.isdigit():
+        index = (int(run_number) - 1) % len(topics)
+    else:
+        index = int(time.time() // 3600) % len(topics)
+
+    category, topic = topics[index]
+    print(f"Selected topic: {category} - {topic}")
+    return topic
+
 def available_models(api_key):
     preferred = os.getenv("GEMINI_MODEL", "").strip()
     discovered = []
@@ -188,7 +215,7 @@ def publish_to_facebook(video, post):
 def main():
     if OUTPUT.exists(): shutil.rmtree(OUTPUT)
     OUTPUT.mkdir(parents=True)
-    topic=os.getenv("VIDEO_TOPIC", "حقيقة مذهلة من التاريخ"); supplied=os.getenv("SCRIPT_TEXT", "").strip()
+    topic=choose_topic(os.getenv("VIDEO_TOPIC", "حقيقة مذهلة من التاريخ")); supplied=os.getenv("SCRIPT_TEXT", "").strip()
     data=manual_script(supplied, topic) if supplied else normalize_data(generate_script(topic), topic)
     (OUTPUT/"script.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     (OUTPUT/"platform-posts.json").write_text(json.dumps(data["platforms"], ensure_ascii=False, indent=2), encoding="utf-8")
