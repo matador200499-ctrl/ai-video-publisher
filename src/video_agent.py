@@ -62,6 +62,32 @@ def available_models(api_key):
         raise RuntimeError("No Gemini text model is available for this API key. Check the key and Generative Language API access.")
     return ranked
 
+def parse_model_json(text):
+    """Extract the first complete JSON object from a model response.
+
+    Gemini can occasionally wrap JSON in Markdown fences or add a short
+    explanation.  A greedy brace-matching regex also consumes any later braces,
+    which produces a misleading JSONDecodeError.  JSONDecoder.raw_decode
+    stops exactly at the end of the first complete object instead.
+    """
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.I | re.S).strip()
+
+    decoder = json.JSONDecoder()
+    errors = []
+    for match in re.finditer(r"\{", cleaned):
+        try:
+            value, _ = decoder.raw_decode(cleaned[match.start():])
+        except json.JSONDecodeError as exc:
+            errors.append(exc)
+            continue
+        if isinstance(value, dict):
+            return value
+
+    detail = f" ({errors[-1]})" if errors else ""
+    raise RuntimeError(f"Gemini did not return a complete JSON object{detail}")
+
 def generate_script(topic):
     prompt = f'''اكتب سكربت فيديو عربي جذاب عن: {topic}
 أعد JSON فقط بهذا الشكل:
@@ -119,9 +145,7 @@ def generate_script(topic):
     if response is None or not response.ok:
         raise RuntimeError("All available Gemini models failed: " + "; ".join(errors))
     text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-    match = re.search(r"\{.*\}", text, re.S)
-    if not match: raise RuntimeError("Gemini did not return valid JSON")
-    return json.loads(match.group(0))
+    return parse_model_json(text)
 
 def platform_copy(title):
     common = ["معلومات", "حقائق", "ثقافة", "فيديو"]
