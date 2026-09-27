@@ -172,14 +172,83 @@ def manual_script(text, topic):
 
 def download_images(queries):
     ASSETS.mkdir(parents=True, exist_ok=True)
-    paths=[]
+    paths = []
+    api_key = os.environ["PEXELS_API_KEY"]
+    headers = {"Authorization": api_key}
+    retryable_statuses = {408, 429, 500, 502, 503, 504}
+
+    # Pexels can return transient 5xx errors. Retry each query, then use
+    # simpler fallback queries so one bad search never kills the whole video.
+    fallback_queries = [
+        "ancient history ruins artifacts",
+        "ancient civilization historical ruins",
+        "history ancient monument",
+    ]
+
     for number, query in enumerate(queries[:5], 1):
-        r=requests.get("https://api.pexels.com/v1/search", headers={"Authorization":os.environ["PEXELS_API_KEY"]}, params={"query":query,"per_page":1,"orientation":"portrait"}, timeout=45)
-        r.raise_for_status(); photos=r.json().get("photos", [])
-        if not photos: continue
-        image=requests.get(photos[0]["src"]["large2x"], timeout=60); image.raise_for_status()
-        path=ASSETS/f"scene-{number:02d}.jpg"; path.write_bytes(image.content); paths.append(path)
-    if not paths: raise RuntimeError("Pexels returned no images")
+        candidates = [str(query).strip()]
+        candidates.extend(q for q in fallback_queries if q not in candidates)
+        photos = []
+
+        for candidate in candidates:
+            for attempt in range(1, 4):
+                try:
+                    response = requests.get(
+                        "https://api.pexels.com/v1/search",
+                        headers=headers,
+                        params={
+                            "query": candidate,
+                            "per_page": 1,
+                            "orientation": "portrait",
+                        },
+                        timeout=45,
+                    )
+                except requests.RequestException as exc:
+                    print(f"Pexels request error for {candidate!r}: {exc}")
+                    if attempt < 3:
+                        time.sleep(2 ** attempt)
+                        continue
+                    break
+
+                if response.ok:
+                    photos = response.json().get("photos", [])
+                    if photos:
+                        break
+                    print(f"Pexels returned no photos for {candidate!r}")
+                    break
+
+                print(
+                    f"Pexels HTTP {response.status_code} for {candidate!r} "
+                    f"(attempt {attempt}/3)"
+                )
+                if response.status_code in retryable_statuses and attempt < 3:
+                    time.sleep(2 ** attempt)
+                    continue
+                break
+
+            if photos:
+                break
+
+        if not photos:
+            print(f"Skipping image query after retries: {query!r}")
+            continue
+
+        try:
+            image = requests.get(
+                photos[0]["src"]["large2x"],
+                timeout=60,
+            )
+            image.raise_for_status()
+        except requests.RequestException as exc:
+            print(f"Failed to download Pexels image for {query!r}: {exc}")
+            continue
+
+        path = ASSETS / f"scene-{number:02d}.jpg"
+        path.write_bytes(image.content)
+        paths.append(path)
+
+    if not paths:
+        raise RuntimeError("Pexels returned no usable images after retries and fallbacks")
     return paths
 
 def media_duration(path):
