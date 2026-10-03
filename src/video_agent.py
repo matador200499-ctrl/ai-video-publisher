@@ -145,7 +145,37 @@ def generate_script(topic):
     if response is None or not response.ok:
         raise RuntimeError("All available Gemini models failed: " + "; ".join(errors))
     text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-    return parse_model_json(text)
+    data = parse_model_json(text)
+
+    # Gemini can occasionally return a valid JSON object that omits the
+    # narration field. Repair the response once before the pipeline continues.
+    if not isinstance(data.get("narration"), str) or not data.get("narration").strip():
+        repair_prompt = (
+            "أعد بناء JSON كامل لفيديو عربي عن: " + topic + "\n"
+            "الرد السابق كان ناقصًا. أعد JSON فقط، ويجب أن يحتوي حتمًا على: "
+            "\"title\": عنوان, \"narration\": نص عربي من 100 إلى 120 كلمة، "
+            "صالح للتعليق الصوتي, \"queries\": خمس عبارات بحث بالإنجليزية للصور, "
+            "\"platforms\": facebook و instagram و tiktok و youtube، ولكل منصة "
+            "title و description و hashtags. لا تستخدم Markdown ولا تشرح شيئًا خارج JSON."
+        )
+        repair_response = requests.post(
+            url,
+            params={"key": api_key},
+            json={"contents":[{"parts":[{"text":repair_prompt}]}]},
+            timeout=90,
+        )
+        if not repair_response.ok:
+            raise RuntimeError(
+                f"Gemini returned incomplete script and repair failed (HTTP {repair_response.status_code})"
+            )
+        repaired = parse_model_json(
+            repair_response.json()["candidates"][0]["content"]["parts"][0]["text"]
+        )
+        if not isinstance(repaired.get("narration"), str) or not repaired.get("narration").strip():
+            raise RuntimeError("Gemini returned JSON without a usable narration after repair")
+        data = repaired
+
+    return data
 
 def platform_copy(title):
     common = ["معلومات", "حقائق", "ثقافة", "فيديو"]
