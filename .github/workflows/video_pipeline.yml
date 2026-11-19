@@ -25,8 +25,19 @@ jobs:
           python-version: "3.11"
       - name: Install FFmpeg and Python packages
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          # GitHub-hosted Ubuntu images often already include FFmpeg.
+          # Avoid a slow/flaky Ubuntu mirror download when it is available.
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            echo "FFmpeg is missing; installing it from Ubuntu packages."
+            if [ -f /etc/apt/apt-mirrors.txt ]; then
+              sudo sed -i '/azure\\.archive\\.ubuntu\\.com/d' /etc/apt/apt-mirrors.txt
+            fi
+            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
+            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y ffmpeg
+          else
+            echo "FFmpeg is already available: $(ffmpeg -version | head -n 1)"
+          fi
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
       - name: Create video and images
         env:
