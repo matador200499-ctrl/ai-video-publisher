@@ -30,7 +30,7 @@ jobs:
           if ! command -v ffmpeg >/dev/null 2>&1; then
             echo "FFmpeg is missing; installing it from Ubuntu packages."
             if [ -f /etc/apt/apt-mirrors.txt ]; then
-              sudo sed -i '/azure\\.archive\\.ubuntu\\.com/d' /etc/apt/apt-mirrors.txt
+              sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
             fi
             sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
             sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y ffmpeg
