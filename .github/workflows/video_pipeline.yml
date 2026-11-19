@@ -13,6 +13,10 @@ on:
         default: ""
   schedule:
     - cron: "0 4,10,16,22 * * *"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/video_pipeline.yml"
 
 jobs:
   create-video:
